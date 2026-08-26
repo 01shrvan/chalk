@@ -2,6 +2,7 @@ import rough from "roughjs";
 import type { Item, Plan } from "./layout";
 
 type Palette = {
+  hand: string;
   ink: string;
   ink2: string;
   faint: string;
@@ -15,6 +16,7 @@ function palette(): Palette {
   const s = getComputedStyle(document.documentElement);
   const v = (n: string) => s.getPropertyValue(n).trim();
   return {
+    hand: v("--font-hand") || "cursive",
     ink: v("--ink"),
     ink2: v("--ink-2"),
     faint: v("--faint"),
@@ -27,6 +29,7 @@ function palette(): Palette {
 
 function write(
   ctx: CanvasRenderingContext2D,
+  hand: string,
   label: string,
   cx: number,
   cy: number,
@@ -36,7 +39,7 @@ function write(
 ) {
   const lines = label.split("\n");
   ctx.fillStyle = colour;
-  ctx.font = `${weight} ${size}px Kalam, "Comic Sans MS", cursive`;
+  ctx.font = `${weight} ${size}px ${hand}, cursive`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   const lh = size + 4;
@@ -118,11 +121,11 @@ export function draw(
       if (item.label) {
         const mx = (item.x1 + item.x2) / 2;
         const my = (item.y1 + item.y2) / 2;
-        ctx.font = `400 13px Kalam, cursive`;
+        ctx.font = `400 13px ${c.hand}, cursive`;
         const w = ctx.measureText(item.label).width;
         ctx.fillStyle = c.paper;
         ctx.fillRect(mx - w / 2 - 7, my - 22, w + 14, 18);
-        write(ctx, item.label, mx, my - 13, on ? c.accent : c.ink2, 13);
+        write(ctx, c.hand, item.label, mx, my - 13, on ? c.accent : c.ink2, 13);
       }
       continue;
     }
@@ -134,12 +137,12 @@ export function draw(
       );
       head(ctx, item.bend, item.y2, item.x2, item.y2, on ? c.accent : c.ink2);
       if (item.label)
-        write(ctx, item.label, item.bend + 6, (item.y1 + item.y2) / 2, on ? c.accent : c.faint, 12);
+        write(ctx, c.hand, item.label, item.bend + 6, (item.y1 + item.y2) / 2, on ? c.accent : c.faint, 12);
       continue;
     }
 
     if (item.kind === "title") {
-      write(ctx, item.label, item.x + item.w / 2, item.y + item.h / 2, c.ink2, 16, 700);
+      write(ctx, c.hand, item.label, item.x + item.w / 2, item.y + item.h / 2, c.ink2, 16, 700);
       continue;
     }
 
@@ -167,6 +170,6 @@ export function draw(
 
     const labelColour =
       on || item.variant === "rewritten" ? c.accent : item.variant === "muted" ? c.ink2 : c.ink;
-    write(ctx, item.label, item.x + item.w / 2, item.y + item.h / 2, labelColour, item.w < 60 ? 17 : 13);
+    write(ctx, c.hand, item.label, item.x + item.w / 2, item.y + item.h / 2, labelColour, item.w < 60 ? 17 : 13);
   }
 }

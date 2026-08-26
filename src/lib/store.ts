@@ -1,79 +1,109 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { SPEC_BY_FORM, type Spec } from "./forms";
 
-export type Saved = {
-  slug: string;
+export type Turn = {
+  id: string;
   question: string;
-  spec: Spec;
-  createdAt: string;
+  answer:
+    | { kind: "drawn"; spec: Spec; attempts: number }
+    | { kind: "declined"; reason: string; prose: string };
+  at: string;
 };
 
-const DIR = path.join(process.cwd(), ".data", "answers");
+export type Conversation = {
+  id: string;
+  title: string;
+  turns: Turn[];
+  createdAt: string;
+  updatedAt: string;
+};
 
-function slugify(question: string): string {
-  const base = question
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .split(/\s+/)
-    .slice(0, 7)
-    .join("-")
-    .slice(0, 60);
-  return base || "answer";
+export type Stub = Pick<Conversation, "id" | "title" | "updatedAt">;
+
+const DIR = path.join(process.cwd(), ".data", "conversations");
+
+function titleFrom(question: string): string {
+  const t = question.trim().replace(/\s+/g, " ");
+  return t.length > 58 ? `${t.slice(0, 56)}…` : t;
 }
 
-export async function save(question: string, spec: Spec): Promise<string> {
-  await fs.mkdir(DIR, { recursive: true });
-
-  const base = slugify(question);
-  let slug = base;
-  let n = 2;
-  while (
-    await fs
-      .access(path.join(DIR, `${slug}.json`))
-      .then(() => true)
-      .catch(() => false)
-  ) {
-    slug = `${base}-${n++}`;
-    if (n > 50) break;
+function valid(c: unknown): c is Conversation {
+  const v = c as Conversation;
+  if (!v || typeof v.id !== "string" || !Array.isArray(v.turns)) return false;
+  for (const turn of v.turns) {
+    if (turn.answer?.kind !== "drawn") continue;
+    const form = turn.answer.spec?.form;
+    if (!form || !(form in SPEC_BY_FORM)) return false;
+    if (!SPEC_BY_FORM[form].safeParse(turn.answer.spec).success) return false;
   }
-
-  const record: Saved = {
-    slug,
-    question,
-    spec,
-    createdAt: new Date().toISOString(),
-  };
-  await fs.writeFile(path.join(DIR, `${slug}.json`), JSON.stringify(record, null, 2), "utf8");
-  return slug;
+  return true;
 }
 
-export async function load(slug: string): Promise<Saved | null> {
-  if (!/^[a-z0-9-]{1,80}$/.test(slug)) return null;
+export async function get(id: string): Promise<Conversation | null> {
+  if (!/^[a-z0-9-]{8,64}$/i.test(id)) return null;
   try {
-    const raw = await fs.readFile(path.join(DIR, `${slug}.json`), "utf8");
-    const parsed = JSON.parse(raw) as Saved;
-    const form = parsed.spec?.form;
-    if (!form || !(form in SPEC_BY_FORM)) return null;
-    const check = SPEC_BY_FORM[form].safeParse(parsed.spec);
-    return check.success ? { ...parsed, spec: check.data as Spec } : null;
+    const raw = await fs.readFile(path.join(DIR, `${id}.json`), "utf8");
+    const parsed = JSON.parse(raw);
+    return valid(parsed) ? parsed : null;
   } catch {
     return null;
   }
 }
 
-export async function recent(limit = 12): Promise<Saved[]> {
+export async function list(limit = 40): Promise<Stub[]> {
   try {
     const files = await fs.readdir(DIR);
     const all = await Promise.all(
-      files.filter((f) => f.endsWith(".json")).map((f) => load(f.replace(/\.json$/, ""))),
+      files.filter((f) => f.endsWith(".json")).map((f) => get(f.replace(/\.json$/, ""))),
     );
     return all
-      .filter((a): a is Saved => a !== null)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, limit);
+      .filter((c): c is Conversation => c !== null)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, limit)
+      .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }));
   } catch {
     return [];
+  }
+}
+
+export async function append(
+  conversationId: string | null,
+  question: string,
+  answer: Turn["answer"],
+): Promise<Conversation> {
+  await fs.mkdir(DIR, { recursive: true });
+  const now = new Date().toISOString();
+
+  const existing = conversationId ? await get(conversationId) : null;
+
+  const conversation: Conversation = existing ?? {
+    id: randomUUID(),
+    title: titleFrom(question),
+    turns: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  conversation.turns.push({ id: randomUUID(), question, answer, at: now });
+  conversation.updatedAt = now;
+
+  await fs.writeFile(
+    path.join(DIR, `${conversation.id}.json`),
+    JSON.stringify(conversation, null, 2),
+    "utf8",
+  );
+
+  return conversation;
+}
+
+export async function remove(id: string): Promise<boolean> {
+  if (!/^[a-z0-9-]{8,64}$/i.test(id)) return false;
+  try {
+    await fs.unlink(path.join(DIR, `${id}.json`));
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -8,7 +8,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.70.0",
+    "@anthropic-ai/sdk": "^0.120.0",
     "dagre": "^0.8.5",
     "next": "^15.1.0",
     "react": "^19.0.0",
