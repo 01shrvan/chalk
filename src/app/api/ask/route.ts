@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof MissingKey) {
       return NextResponse.json(
-        { error: "No API key yet. Add ANTHROPIC_API_KEY to .env.local and restart." },
+        { error: "No API key yet. Add GEMINI_API_KEY to .env.local and restart." },
         { status: 503 },
       );
     }

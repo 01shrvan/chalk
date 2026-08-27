@@ -111,7 +111,9 @@ h2 { margin: 0; font-size: 1.0625rem; font-weight: 500; letter-spacing: -0.015em
 
 .board { margin: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--card); }
 .board__scroll { overflow-x: auto; padding: 0.75rem; background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 16px 16px; background-position: -1px -1px; }
-canvas { display: block; }
+.board__svg { display: block; }
+.board__svg svg { display: block; max-width: none; }
+.board__svg .ch-text { transition: opacity 220ms ease; }
 
 .say { padding: 0.9rem 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; min-height: 4.5rem; border-top: 1px solid var(--border); }
 .say__text { margin: 0; font-size: 0.9375rem; line-height: 1.6; max-width: 64ch; }

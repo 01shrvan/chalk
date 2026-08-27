@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Spec } from "@/lib/forms";
 import { layout } from "@/lib/layout";
-import { draw } from "@/lib/render";
+import { animate, build } from "@/lib/render";
 
 export default function Board({ spec }: { spec: Spec }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const prevStep = useRef<number>(-1);
   const [at, setAt] = useState(0);
   const [playing, setPlaying] = useState(false);
 
@@ -14,11 +15,22 @@ export default function Board({ spec }: { spec: Spec }) {
   const step = spec.steps[at];
 
   const paint = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const host = hostRef.current;
+    if (!host) return;
+
     const visible = new Set<string>();
     for (let i = 0; i <= at; i++) for (const id of spec.steps[i].add) visible.add(id);
-    draw(canvas, plan, visible, new Set(spec.steps[at].emphasise));
+
+    const movedForward = at > prevStep.current;
+    const fresh = new Set<string>(movedForward ? spec.steps[at].add : []);
+    prevStep.current = at;
+
+    const svg = build(plan, visible, new Set(spec.steps[at].emphasise), fresh);
+    host.replaceChildren(svg);
+
+    if (fresh.size) {
+      animate(svg, window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    }
   }, [at, plan, spec]);
 
   useEffect(() => {
@@ -37,7 +49,7 @@ export default function Board({ spec }: { spec: Spec }) {
       setPlaying(false);
       return;
     }
-    const t = setTimeout(() => setAt((v) => v + 1), 3400);
+    const t = setTimeout(() => setAt((v) => v + 1), 3600);
     return () => clearTimeout(t);
   }, [playing, at, spec.steps.length]);
 
@@ -49,7 +61,12 @@ export default function Board({ spec }: { spec: Spec }) {
   return (
     <figure className="board">
       <div className="board__scroll">
-        <canvas ref={canvasRef} aria-label={`${spec.topic}, step ${at + 1}`} />
+        <div
+          ref={hostRef}
+          className="board__svg"
+          role="img"
+          aria-label={`${spec.topic}, step ${at + 1} of ${spec.steps.length}`}
+        />
       </div>
 
       <figcaption className="say" aria-live="polite">
@@ -61,21 +78,20 @@ export default function Board({ spec }: { spec: Spec }) {
         <button type="button" onClick={() => go(at - 1)} disabled={at === 0}>
           back
         </button>
-        <button
-          type="button"
-          onClick={() => go(at + 1)}
-          disabled={at === spec.steps.length - 1}
-        >
+        <button type="button" onClick={() => go(at + 1)} disabled={at === spec.steps.length - 1}>
           next
         </button>
         <button
           type="button"
           onClick={() => {
-            if (at >= spec.steps.length - 1) setAt(0);
+            if (at >= spec.steps.length - 1) {
+              prevStep.current = -1;
+              setAt(0);
+            }
             setPlaying((p) => !p);
           }}
         >
-          {playing ? "pause" : "play"}
+          {playing ? "pause" : "replay"}
         </button>
 
         <div className="ticks" role="group" aria-label="steps">

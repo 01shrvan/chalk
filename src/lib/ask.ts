@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { z } from "zod";
 import {
@@ -10,7 +10,7 @@ import {
   type Spec,
 } from "./forms";
 
-const MODEL = "claude-opus-5";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 export type Answer =
   | { kind: "drawn"; spec: Spec; attempts: number }
@@ -18,22 +18,90 @@ export type Answer =
 
 export class MissingKey extends Error {
   constructor() {
-    super("ANTHROPIC_API_KEY is not set");
+    super("GEMINI_API_KEY is not set");
   }
 }
 
 function client() {
-  if (!process.env.ANTHROPIC_API_KEY) throw new MissingKey();
-  return new Anthropic();
+  const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new MissingKey();
+  return new GoogleGenAI({ apiKey });
+}
+
+const DROP = new Set([
+  "$schema",
+  "additionalProperties",
+  "default",
+  "definitions",
+  "$ref",
+  "allOf",
+  "oneOf",
+  "anyOf",
+  "not",
+  "const",
+  "minLength",
+  "maxLength",
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "pattern",
+]);
+
+function forGemini(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(forGemini);
+  if (node === null || typeof node !== "object") return node;
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (DROP.has(key)) continue;
+    if (key === "properties" && value && typeof value === "object") {
+      const props: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        props[k] = forGemini(v);
+      }
+      out[key] = props;
+      continue;
+    }
+    out[key] = forGemini(value);
+  }
+  return out;
+}
+
+function schemaFor(shape: z.ZodTypeAny) {
+  return forGemini(
+    zodToJsonSchema(shape, { target: "openApi3", $refStrategy: "none" }),
+  ) as Record<string, unknown>;
+}
+
+async function json<T>(
+  systemInstruction: string,
+  prompt: string,
+  shape: z.ZodType<T>,
+): Promise<T> {
+  const res = await client().models.generateContent({
+    model: MODEL,
+    contents: prompt,
+    config: {
+      systemInstruction,
+      responseMimeType: "application/json",
+      responseSchema: schemaFor(shape),
+      temperature: 0.4,
+    },
+  });
+
+  const text = res.text;
+  if (!text) throw new Error("model returned no text");
+  return shape.parse(JSON.parse(text));
 }
 
 const Verdict = z.object({
   drawable: z.boolean(),
   form: z.enum([...FORMS, "none"]),
-  because: z.string().min(1).max(240),
+  because: z.string(),
 });
 
-const CLASSIFY_SYSTEM = `You decide whether a question can honestly be answered with a diagram.
+const CLASSIFY = `You decide whether a question can honestly be answered with a diagram.
 
 Most questions cannot. A diagram needs named parts and a relationship between them:
 things passing messages, something moving through stages, or two approaches placed
@@ -54,8 +122,8 @@ the product look broken. Drawing a shrug makes it look stupid.
 
 "because" is one sentence, addressed to the person asking, explaining your call.`;
 
-const GENERATE_SYSTEM = `You produce the structure of a diagram that gets drawn one
-piece at a time, the way a teacher builds it at a whiteboard.
+const GENERATE = `You produce the structure of a diagram that gets drawn one piece
+at a time, the way a teacher builds it at a whiteboard.
 
 You never place anything. No coordinates, no sizes, no positions — a layout engine
 does that. You choose what exists and the order it appears in.
@@ -71,91 +139,33 @@ The order is the explanation. Rules:
   something already drawn with "emphasise" and explain the thing people get wrong —
   why a step is not a formality, what a name hides, which part is load-bearing. Put
   the sharp version in "aside" as a short line.
-- Use "emphasise" for ids already added by an earlier step. Never emphasise
-  something that has not appeared.
+- Use "emphasise" only for ids an earlier step already added.
 - Every node and edge must be added by exactly one step.
-- Labels are terse. They sit inside shapes.
+- Labels are terse. They sit inside shapes. Keep node labels under 24 characters
+  and edge labels under 40.
 - 4 to 7 steps. Fewer than 4 is a picture, not an explanation.
 
 Write plainly. No filler, no "let's dive in", no exclamation marks.`;
 
-function schemaFor(form: Form) {
-  const json = zodToJsonSchema(SPEC_BY_FORM[form], {
-    target: "openApi3",
-    $refStrategy: "none",
-  });
-  return json as Record<string, unknown>;
-}
-
-async function classify(question: string): Promise<z.infer<typeof Verdict>> {
-  const res = await client().messages.create({
-    model: MODEL,
-    max_tokens: 1000,
-    system: CLASSIFY_SYSTEM,
-    output_config: {
-      effort: "low",
-      format: {
-        type: "json_schema",
-        schema: zodToJsonSchema(Verdict, { target: "openApi3", $refStrategy: "none" }) as Record<
-          string,
-          unknown
-        >,
-      },
-    },
-    messages: [{ role: "user", content: question }],
-  });
-
-  const text = res.content.find((b) => b.type === "text");
-  if (!text || text.type !== "text") throw new Error("classifier returned no text");
-  return Verdict.parse(JSON.parse(text.text));
-}
-
-async function draft(question: string, form: Form, priorProblems?: string[]): Promise<unknown> {
-  const repair = priorProblems?.length
-    ? `\n\nYour previous attempt was rejected. Fix exactly these and change nothing else:\n${priorProblems
-        .map((p) => `- ${p}`)
-        .join("\n")}`
-    : "";
-
-  const res = await client().messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    system: GENERATE_SYSTEM,
-    thinking: { type: "adaptive" },
-    output_config: {
-      effort: "high",
-      format: { type: "json_schema", schema: schemaFor(form) },
-    },
-    messages: [
-      {
-        role: "user",
-        content: `Question: ${question}\n\nForm: ${form} — ${FORM_BLURB[form]}${repair}`,
-      },
-    ],
-  });
-
-  const text = res.content.find((b) => b.type === "text");
-  if (!text || text.type !== "text") throw new Error("generator returned no text");
-  return JSON.parse(text.text);
-}
-
-async function prose(question: string, because: string): Promise<string> {
-  const res = await client().messages.create({
-    model: MODEL,
-    max_tokens: 1200,
-    output_config: { effort: "low" },
-    system: `Answer the question directly in two or three short paragraphs. Plain
+const PROSE = `Answer the question directly in two or three short paragraphs. Plain
 prose, no headings, no lists, no preamble. The reader has just been told this
-question does not suit a diagram, so do not apologise or mention diagrams.`,
-    messages: [{ role: "user", content: question }],
-  });
+question does not suit a diagram, so do not apologise or mention diagrams.`;
 
-  const text = res.content.find((b) => b.type === "text");
-  return text && text.type === "text" ? text.text : because;
+async function prose(question: string, fallback: string): Promise<string> {
+  try {
+    const res = await client().models.generateContent({
+      model: MODEL,
+      contents: question,
+      config: { systemInstruction: PROSE, temperature: 0.6 },
+    });
+    return res.text ?? fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export async function ask(question: string): Promise<Answer> {
-  const verdict = await classify(question);
+  const verdict = await json(CLASSIFY, question, Verdict);
 
   if (!verdict.drawable || verdict.form === "none") {
     return {
@@ -165,13 +175,36 @@ export async function ask(question: string): Promise<Answer> {
     };
   }
 
-  const form = verdict.form;
+  const form: Form = verdict.form;
   let problems: string[] | undefined;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const raw = await draft(question, form, problems);
-    const parsed = SPEC_BY_FORM[form].safeParse(raw);
+    const repair = problems?.length
+      ? `\n\nYour previous attempt was rejected. Fix exactly these and change nothing else:\n${problems
+          .map((p) => `- ${p}`)
+          .join("\n")}`
+      : "";
 
+    let raw: unknown;
+    try {
+      const res = await client().models.generateContent({
+        model: MODEL,
+        contents: `Question: ${question}\n\nForm: ${form} — ${FORM_BLURB[form]}${repair}`,
+        config: {
+          systemInstruction: GENERATE,
+          responseMimeType: "application/json",
+          responseSchema: schemaFor(SPEC_BY_FORM[form]),
+          temperature: 0.5,
+        },
+      });
+      if (!res.text) throw new Error("empty response");
+      raw = JSON.parse(res.text);
+    } catch (error) {
+      problems = [String(error instanceof Error ? error.message : error)];
+      continue;
+    }
+
+    const parsed = SPEC_BY_FORM[form].safeParse(raw);
     if (!parsed.success) {
       problems = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
       continue;

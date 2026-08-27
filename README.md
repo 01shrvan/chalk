@@ -39,7 +39,7 @@ Anything else is declined.
 
 ```
 npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY
+cp .env.example .env.local   # add GEMINI_API_KEY
 npm run dev
 ```
 
