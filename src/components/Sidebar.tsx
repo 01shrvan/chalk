@@ -3,14 +3,20 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import type { Stub } from "@/lib/store";
+import Mark from "./Mark";
+
+const NAV = [
+  { href: "/", label: "Ask" },
+  { href: "/library", label: "Library" },
+  { href: "/paths", label: "Paths" },
+];
 
 function when(iso: string): string {
-  const d = new Date(iso);
-  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
   if (days === 0) return "today";
-  if (days === 1) return "yesterday";
+  if (days === 1) return "1d";
   if (days < 7) return `${days}d`;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 export default function Sidebar({ conversations }: { conversations: Stub[] }) {
@@ -27,13 +33,14 @@ export default function Sidebar({ conversations }: { conversations: Stub[] }) {
         aria-controls="rail"
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? "close" : "history"}
+        {open ? "close" : "menu"}
       </button>
 
       <aside id="rail" className="rail" data-open={open || undefined}>
         <div className="rail__top">
           <a className="brand" href="/">
-            chalk<em>.</em>
+            <Mark />
+            chalk
           </a>
           <button
             type="button"
@@ -47,11 +54,24 @@ export default function Sidebar({ conversations }: { conversations: Stub[] }) {
           </button>
         </div>
 
-        <nav className="rail__list" aria-label="Past conversations">
-          {conversations.length === 0 && (
-            <p className="rail__empty">Nothing drawn yet.</p>
-          )}
-          {conversations.map((c) => {
+        <nav className="rail__nav" aria-label="Sections">
+          {NAV.map((n) => (
+            <a
+              key={n.href}
+              href={n.href}
+              className={`rail__item${pathname === n.href ? " is-active" : ""}`}
+              aria-current={pathname === n.href || undefined}
+              onClick={() => setOpen(false)}
+            >
+              <span className="rail__title">{n.label}</span>
+            </a>
+          ))}
+        </nav>
+
+        <div className="rail__list">
+          <p className="rail__label">Recent</p>
+          {conversations.length === 0 && <p className="rail__empty">Nothing drawn yet.</p>}
+          {conversations.slice(0, 20).map((c) => {
             const active = pathname === `/c/${c.id}`;
             return (
               <a
@@ -66,16 +86,23 @@ export default function Sidebar({ conversations }: { conversations: Stub[] }) {
               </a>
             );
           })}
-        </nav>
+        </div>
 
         <p className="rail__foot">
           sequence · dataflow · comparison
           <br />
-          anything else is declined
+          anything else gets declined
         </p>
       </aside>
 
-      {open && <button type="button" className="rail__scrim" aria-label="Close history" onClick={() => setOpen(false)} />}
+      {open && (
+        <button
+          type="button"
+          className="rail__scrim"
+          aria-label="Close menu"
+          onClick={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }

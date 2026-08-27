@@ -1,21 +1,8 @@
 import type { Metadata, Viewport } from "next";
-import { Shantell_Sans, Instrument_Sans } from "next/font/google";
+import { Toaster } from "sonner";
 import Sidebar from "@/components/Sidebar";
 import { list } from "@/lib/store";
 import "./globals.css";
-
-const hand = Shantell_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-hand",
-  display: "swap",
-});
-
-const sans = Instrument_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  display: "swap",
-});
 
 const description =
   "Ask a question and the answer gets drawn one piece at a time, the way a teacher builds it at a whiteboard. If the question has no structure, Chalk says so instead of drawing a shrug.";
@@ -29,8 +16,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#16150f",
-  colorScheme: "dark light",
+  themeColor: "#d7dbe1",
+  colorScheme: "light",
 };
 
 export default async function RootLayout({
@@ -41,12 +28,19 @@ export default async function RootLayout({
   const conversations = await list();
 
   return (
-    <html lang="en" className={`${hand.variable} ${sans.variable}`}>
+    <html lang="en">
       <body>
         <div className="app">
           <Sidebar conversations={conversations} />
-          <main className="stage">{children}</main>
+          <div className="stage">{children}</div>
         </div>
+        <Toaster
+          position="bottom-right"
+          offset={20}
+          gap={10}
+          duration={5000}
+          toastOptions={{ className: "toast" }}
+        />
       </body>
     </html>
   );

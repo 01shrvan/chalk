@@ -19,7 +19,7 @@ export default async function Conversation({ params }: Props) {
 
   return (
     <>
-      <Thread conversationId={conversation.id} initialTurns={conversation.turns} />
+      <Thread conversationId={conversation.id} initialTurns={conversation.turns} title={conversation.title} />
 
       <noscript>
         <div className="fallback">
