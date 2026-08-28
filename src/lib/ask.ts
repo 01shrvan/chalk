@@ -22,6 +22,38 @@ export class MissingKey extends Error {
   }
 }
 
+export class RateLimited extends Error {
+  constructor(readonly retryAfter: number) {
+    super("rate limited");
+  }
+}
+
+function rateLimitDelay(error: unknown): number | null {
+  const raw =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message: unknown }).message)
+      : String(error);
+  if (!raw.includes("RESOURCE_EXHAUSTED") && !raw.includes('"code":429')) return null;
+  const m = raw.match(/retry in ([0-9.]+)s/i);
+  return m ? Math.ceil(Number(m[1])) : 30;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function withBackoff<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await run();
+    } catch (error) {
+      const wait = rateLimitDelay(error);
+      if (wait === null) throw error;
+      if (attempt === 2) throw new RateLimited(wait);
+      await sleep(Math.min(wait, 20) * 1000 + 250);
+    }
+  }
+  throw new RateLimited(30);
+}
+
 function client() {
   const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new MissingKey();
@@ -79,7 +111,7 @@ async function json<T>(
   prompt: string,
   shape: z.ZodType<T>,
 ): Promise<T> {
-  const res = await client().models.generateContent({
+  const res = await withBackoff(() => client().models.generateContent({
     model: MODEL,
     contents: prompt,
     config: {
@@ -88,7 +120,7 @@ async function json<T>(
       responseSchema: schemaFor(shape),
       temperature: 0.4,
     },
-  });
+  }));
 
   const text = res.text;
   if (!text) throw new Error("model returned no text");
@@ -153,13 +185,14 @@ question does not suit a diagram, so do not apologise or mention diagrams.`;
 
 async function prose(question: string, fallback: string): Promise<string> {
   try {
-    const res = await client().models.generateContent({
+    const res = await withBackoff(() => client().models.generateContent({
       model: MODEL,
       contents: question,
       config: { systemInstruction: PROSE, temperature: 0.6 },
-    });
+    }));
     return res.text ?? fallback;
-  } catch {
+  } catch (error) {
+    if (error instanceof RateLimited) throw error;
     return fallback;
   }
 }
@@ -187,7 +220,7 @@ export async function ask(question: string): Promise<Answer> {
 
     let raw: unknown;
     try {
-      const res = await client().models.generateContent({
+      const res = await withBackoff(() => client().models.generateContent({
         model: MODEL,
         contents: `Question: ${question}\n\nForm: ${form} — ${FORM_BLURB[form]}${repair}`,
         config: {
@@ -196,10 +229,11 @@ export async function ask(question: string): Promise<Answer> {
           responseSchema: schemaFor(SPEC_BY_FORM[form]),
           temperature: 0.5,
         },
-      });
+      }));
       if (!res.text) throw new Error("empty response");
       raw = JSON.parse(res.text);
     } catch (error) {
+      if (error instanceof RateLimited) throw error;
       problems = [String(error instanceof Error ? error.message : error)];
       continue;
     }
@@ -207,12 +241,14 @@ export async function ask(question: string): Promise<Answer> {
     const parsed = SPEC_BY_FORM[form].safeParse(raw);
     if (!parsed.success) {
       problems = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+      console.warn(`[chalk] ${form} attempt ${attempt} schema:`, problems.slice(0, 6));
       continue;
     }
 
     const spec = parsed.data as Spec;
     const refs = checkReferences(spec);
     if (refs.ok) return { kind: "drawn", spec, attempts: attempt };
+    console.warn(`[chalk] ${form} attempt ${attempt} refs:`, refs.problems.slice(0, 6));
     problems = refs.problems;
   }
 

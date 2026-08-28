@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ask, MissingKey } from "@/lib/ask";
+import { ask, MissingKey, RateLimited } from "@/lib/ask";
 import { append } from "@/lib/store";
 
 export const runtime = "nodejs";
@@ -36,6 +36,14 @@ export async function POST(request: Request) {
       turn: conversation.turns[conversation.turns.length - 1],
     });
   } catch (error) {
+    if (error instanceof RateLimited) {
+      return NextResponse.json(
+        {
+          error: `Gemini's free tier is rated at 20 requests a minute and Chalk uses two per question. Try again in about ${error.retryAfter}s.`,
+        },
+        { status: 429, headers: { "Retry-After": String(error.retryAfter) } },
+      );
+    }
     if (error instanceof MissingKey) {
       return NextResponse.json(
         { error: "No API key yet. Add GEMINI_API_KEY to .env.local and restart." },
