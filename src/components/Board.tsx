@@ -10,6 +10,7 @@ export default function Board({ spec }: { spec: Spec }) {
   const prevStep = useRef<number>(-1);
   const [at, setAt] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [inkMs, setInkMs] = useState(0);
 
   const plan = useMemo(() => layout(spec), [spec]);
   const step = spec.steps[at];
@@ -29,7 +30,10 @@ export default function Board({ spec }: { spec: Spec }) {
     host.replaceChildren(svg);
 
     if (fresh.size) {
-      animate(svg, window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      setInkMs(animate(svg, reduced));
+    } else {
+      setInkMs(0);
     }
   }, [at, plan, spec]);
 
@@ -70,7 +74,17 @@ export default function Board({ spec }: { spec: Spec }) {
       </div>
 
       <figcaption className="say" aria-live="polite">
-        <p className="say__text">{step.say}</p>
+        <p className="say__text" key={`${at}-say`}>
+          {step.say.split(" ").map((w, i, all) => (
+            <span
+              className="w"
+              key={i}
+              style={{ animationDelay: `${Math.round((inkMs / Math.max(all.length, 1)) * i)}ms` }}
+            >
+              {w}{i < all.length - 1 ? " " : ""}
+            </span>
+          ))}
+        </p>
         {step.aside ? <p className="say__aside">{step.aside}</p> : null}
       </figcaption>
 

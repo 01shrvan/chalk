@@ -198,49 +198,65 @@ export function build(
   return svg as SVGSVGElement;
 }
 
-export function animate(svg: SVGSVGElement, reduced: boolean) {
+export function animate(svg: SVGSVGElement, reduced: boolean): number {
   const groups = svg.querySelectorAll<SVGGElement>("g[data-fresh]");
+  if (!groups.length) return 0;
+
   if (reduced) {
     groups.forEach((g) => g.removeAttribute("data-fresh"));
-    return;
+    return 0;
   }
 
+  type Pending = { path: SVGPathElement; len: number; ms: number; delay: number };
+  const strokes: Pending[] = [];
+  const labels: { node: SVGElement; delay: number }[] = [];
   let delay = 0;
 
   groups.forEach((group) => {
-    const strokes = group.querySelectorAll<SVGPathElement>("path:not(.ch-text path)");
-    const labels = group.querySelectorAll<SVGGElement | SVGRectElement>(".ch-text");
-
     let longest = 0;
-    strokes.forEach((path) => {
+
+    group.querySelectorAll<SVGPathElement>("path").forEach((path) => {
+      if (path.closest(".ch-text")) return;
       let len = 0;
       try {
         len = path.getTotalLength();
       } catch {
-        len = 0;
+        return;
       }
       if (!len || !Number.isFinite(len)) return;
-      longest = Math.max(longest, len);
 
-      const ms = Math.min(140 + len * 1.5, 620);
-      path.style.strokeDasharray = `${len}`;
-      path.style.strokeDashoffset = `${len}`;
-      path.style.transition = `stroke-dashoffset ${ms}ms cubic-bezier(0.16, 1, 0.3, 1) ${delay}ms`;
-      requestAnimationFrame(() => {
-        path.style.strokeDashoffset = "0";
-      });
+      const ms = Math.min(160 + len * 1.4, 640);
+      longest = Math.max(longest, ms);
+      strokes.push({ path, len, ms, delay });
+
+      path.style.strokeDasharray = String(len);
+      path.style.strokeDashoffset = String(len);
     });
 
-    const settle = delay + Math.min(140 + longest * 1.5, 620);
-    labels.forEach((label) => {
-      label.style.opacity = "0";
-      label.style.transition = `opacity 220ms ease ${settle - 120}ms`;
-      requestAnimationFrame(() => {
-        label.style.opacity = "1";
-      });
+    group.querySelectorAll<SVGElement>(".ch-text").forEach((node) => {
+      node.style.opacity = "0";
+      labels.push({ node, delay: delay + Math.max(longest - 120, 0) });
     });
 
     delay += 110;
     group.removeAttribute("data-fresh");
   });
+
+  if (!strokes.length && !labels.length) return 0;
+
+  void svg.getBoundingClientRect();
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      for (const s of strokes) {
+        s.path.style.transition = `stroke-dashoffset ${s.ms}ms cubic-bezier(0.16, 1, 0.3, 1) ${s.delay}ms`;
+        s.path.style.strokeDashoffset = "0";
+      }
+      for (const l of labels) {
+        l.node.style.transition = `opacity 220ms ease ${l.delay}ms`;
+        l.node.style.opacity = "1";
+      }
+    });
+  });
+  return strokes.reduce((max, s) => Math.max(max, s.delay + s.ms), 0);
 }

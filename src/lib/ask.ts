@@ -10,7 +10,7 @@ import {
   type Spec,
 } from "./forms";
 
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-3.6-flash";
 
 export type Answer =
   | { kind: "drawn"; spec: Spec; attempts: number }

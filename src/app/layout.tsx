@@ -1,8 +1,16 @@
 import type { Metadata, Viewport } from "next";
+import { JetBrains_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import Sidebar from "@/components/Sidebar";
 import { list } from "@/lib/store";
 import "./globals.css";
+
+const mono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 const description =
   "Ask a question and the answer gets drawn one piece at a time, the way a teacher builds it at a whiteboard. If the question has no structure, Chalk says so instead of drawing a shrug.";
@@ -28,7 +36,7 @@ export default async function RootLayout({
   const conversations = await list();
 
   return (
-    <html lang="en">
+    <html lang="en" className={mono.variable}>
       <body>
         <div className="app">
           <Sidebar conversations={conversations} />
